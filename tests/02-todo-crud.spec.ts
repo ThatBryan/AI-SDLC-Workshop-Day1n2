@@ -7,7 +7,7 @@ test.beforeEach(async ({ page, auth, passkeys }) => {
   await auth.expectLogin();
   await auth.register(uniqueUsername());
   await passkeys.onlyCredential();
-  await expect(page.getByRole('region', { name: 'Pending' })).toBeVisible();
+  await expect(page.getByText('You have no todos yet.')).toBeVisible();
 });
 
 test('creates a title-only todo with medium priority in Pending', async ({ page }) => {

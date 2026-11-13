@@ -35,6 +35,16 @@ export async function createTodo(
   return card;
 }
 
+export async function createTag(
+  page: Page,
+  name: string,
+  color = '#3B82F6',
+): Promise<{ id: number; name: string; color: string }> {
+  const response = await page.request.post('/api/tags', { data: { name, color } });
+  expect(response.status()).toBe(201);
+  return await response.json() as { id: number; name: string; color: string };
+}
+
 /**
  * Only this run's four exact SQLite filenames may be removed. No app DB import,
  * glob, directory deletion, shell command, or externally supplied DATABASE_PATH.

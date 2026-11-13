@@ -475,13 +475,13 @@ Powerful search and filtering system to find exactly the todos you need with mul
 
 #### Location & Appearance
 - Located at top of todo list (below todo form)
-- Full-width input with search icon (🔍)
+- Full-width search input
 - Placeholder: "Search todos and subtasks..."
 - Clear button (✕) appears when typing
 
 #### How It Works
 - **Searches**: Todo titles AND subtask titles
-- **Real-time**: Results update as you type
+- **Debounced**: Results update 300 ms after typing stops; clearing is immediate
 - **Case-insensitive**: Finds "meeting" or "Meeting"
 - **Partial match**: "proj" finds "project" and "projection"
 - **Clear**: Click ✕ or delete all text
@@ -510,7 +510,7 @@ Located below search bar in a horizontal row:
 
 #### Tag Filter
 - Dropdown: "All Tags"
-- Shows only if tags exist
+- Lists available tags, if any
 - Options:
   - All Tags (default)
   - Individual tag names
@@ -525,7 +525,7 @@ Located below search bar in a horizontal row:
 #### Active Filter Actions
 Appears when ANY filter is active:
 - **"Clear All"** button (red) - Removes all filters instantly
-- **"💾 Save Filter"** button (green) - Opens save filter modal
+- **"Save Filter"** button (green) - Opens save filter modal
 
 ### Advanced Filters Panel
 
@@ -556,6 +556,7 @@ Two date inputs side-by-side:
 - Use "From" only: all todos after that date
 - Use "To" only: all todos before that date
 - Only shows todos WITH due dates
+- Dates are inclusive and use the Singapore calendar day
 
 #### 3. Saved Filter Presets
 Displayed if any presets exist:
@@ -573,7 +574,7 @@ Displayed if any presets exist:
    - Tag
    - Date range
    - Completion status
-2. Click **"💾 Save Filter"** button (appears when filters active)
+2. Click **"Save Filter"** button (appears when filters active)
 3. Modal opens showing:
    - Name input field
    - Current filter preview
@@ -602,8 +603,11 @@ Current Filters:
 #### Preset Storage
 - **Location**: Browser localStorage
 - **Persistence**: Survives page refresh
-- **User-specific**: Per browser/device
-- **Format**: JSON object
+- **Scope**: Local to this browser, not synced or isolated by account
+- **Format**: JSON array
+- If stored data is invalid, an error is shown; saving a new filter replaces it.
+- If browser storage is full, saving shows an error and leaves existing presets unchanged.
+- Applying a preset whose tag was deleted resets that tag filter to All Tags and shows a notice.
 
 ### Applying Saved Presets
 

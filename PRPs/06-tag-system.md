@@ -33,7 +33,7 @@ Tags are strictly user-scoped: no user can see, edit, or apply another user's ta
 
 ### Applying tags to a todo
 1. Below the todo creation form (or inside the edit modal), the user sees a row of tag pills for all their tags.
-2. Clicking an unselected pill selects it (checkmark + colored background + white text); clicking a selected pill deselects it.
+2. Clicking an unselected pill selects it (checkmark + colored background + a foreground color chosen for WCAG AA contrast); clicking a selected pill deselects it.
 3. Multiple tags may be selected. On submit, the selected tag IDs are attached to the todo.
 
 ### Editing a tag
@@ -166,10 +166,12 @@ function TagPill({ tag, selected = false, onClick }: TagPillProps) {
     <button
       type="button"
       onClick={() => onClick?.(tag)}
-      style={selected ? { backgroundColor: tag.color } : undefined}
+      style={selected
+        ? { backgroundColor: tag.color, color: getTagTextColor(tag.color) }
+        : undefined}
       className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-medium border transition-colors
         ${selected
-          ? 'text-white border-transparent'
+          ? 'border-transparent'
           : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 border-gray-300 dark:border-gray-600'}`}
     >
       {selected && <span aria-hidden>✓</span>}
@@ -252,7 +254,7 @@ function ManageTagsModal({ tags, onClose, onCreate, onUpdate, onDelete }: {
 - [ ] Duplicate tag name for the same user is rejected with a clear error
 - [ ] The same tag name is allowed for two different users
 - [ ] A todo can have multiple tags attached simultaneously
-- [ ] Tag pills render with the tag's color and white text, in both light and dark mode
+- [ ] Tag pills render with the tag's color and a foreground color that meets WCAG AA contrast in both light and dark mode
 - [ ] Filtering by a tag shows only todos carrying that tag (see PRP 08 for combination with other filters)
 - [ ] Attaching/detaching an already-attached/detached tag is idempotent (no error, no duplicate rows)
 - [ ] All tag endpoints reject unauthenticated requests with `401`

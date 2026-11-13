@@ -31,6 +31,16 @@ export interface Tag {
   created_at: string;
 }
 
+export interface CreateTagInput {
+  name: string;
+  color?: string;
+}
+
+export interface UpdateTagInput {
+  name?: string;
+  color?: string;
+}
+
 export interface Todo {
   id: number;
   user_id: number;
@@ -181,12 +191,14 @@ export function getDB(): Database.Database {
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
       UNIQUE(user_id, name)
     );
+    CREATE INDEX IF NOT EXISTS idx_tags_user_id ON tags(user_id);
 
     CREATE TABLE IF NOT EXISTS todo_tags (
       todo_id INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
       tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
       PRIMARY KEY (todo_id, tag_id)
     );
+    CREATE INDEX IF NOT EXISTS idx_todo_tags_tag_id ON todo_tags(tag_id);
   `);
   databaseGlobal.todoDatabase = db;
   return db;
@@ -209,10 +221,10 @@ function getTodoForUser(id: number, userId: number): Todo | undefined {
       `SELECT tags.id, tags.user_id, tags.name, tags.color, tags.created_at
        FROM tags
        INNER JOIN todo_tags ON todo_tags.tag_id = tags.id
-       WHERE todo_tags.todo_id = ?
+       WHERE todo_tags.todo_id = ? AND tags.user_id = ?
        ORDER BY tags.name COLLATE NOCASE ASC`,
     )
-    .all(id) as Tag[];
+    .all(id, userId) as Tag[];
 
   return {
     ...row,
@@ -353,6 +365,86 @@ export const challengeStore = {
     return getDB().prepare<[string, number], Challenge>(`
       DELETE FROM auth_challenges WHERE id = ? AND expires_at > ? RETURNING *
     `).get(id, getSingaporeNow().getTime());
+  },
+};
+
+export const tagDB = {
+  findAllByUser(userId: number): Tag[] {
+    return getDB().prepare<[number], Tag>(`
+      SELECT * FROM tags WHERE user_id = ? ORDER BY name COLLATE NOCASE ASC, id ASC
+    `).all(userId);
+  },
+
+  findById(id: number, userId: number): Tag | undefined {
+    return getDB().prepare<[number, number], Tag>(
+      'SELECT * FROM tags WHERE id = ? AND user_id = ?',
+    ).get(id, userId);
+  },
+
+  create(userId: number, input: CreateTagInput): Tag {
+    const result = getDB().prepare(`
+      INSERT INTO tags (user_id, name, color) VALUES (?, ?, ?)
+    `).run(userId, input.name.trim(), input.color ?? '#3B82F6');
+    const tag = tagDB.findById(Number(result.lastInsertRowid), userId);
+    if (!tag) throw new Error('Created tag could not be reloaded');
+    return tag;
+  },
+
+  update(id: number, userId: number, input: UpdateTagInput): Tag | undefined {
+    const fields: string[] = [];
+    const values: string[] = [];
+    if (input.name !== undefined) {
+      fields.push('name = ?');
+      values.push(input.name.trim());
+    }
+    if (input.color !== undefined) {
+      fields.push('color = ?');
+      values.push(input.color);
+    }
+    if (fields.length === 0) return tagDB.findById(id, userId);
+
+    return getDB().transaction(() => {
+      if (!tagDB.findById(id, userId)) return undefined;
+      getDB().prepare(
+        `UPDATE tags SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`,
+      ).run(...values, id, userId);
+      return tagDB.findById(id, userId);
+    })();
+  },
+
+  delete(id: number, userId: number): boolean {
+    return getDB().prepare(
+      'DELETE FROM tags WHERE id = ? AND user_id = ?',
+    ).run(id, userId).changes > 0;
+  },
+
+  attachToTodo(todoId: number, tagId: number, userId: number): boolean {
+    return getDB().prepare(`
+      INSERT OR IGNORE INTO todo_tags (todo_id, tag_id)
+      SELECT ?, ?
+      WHERE EXISTS (SELECT 1 FROM todos WHERE id = ? AND user_id = ?)
+        AND EXISTS (SELECT 1 FROM tags WHERE id = ? AND user_id = ?)
+    `).run(todoId, tagId, todoId, userId, tagId, userId).changes > 0;
+  },
+
+  detachFromTodo(todoId: number, tagId: number, userId: number): boolean {
+    return getDB().prepare(`
+      DELETE FROM todo_tags
+      WHERE todo_id = ? AND tag_id = ?
+        AND EXISTS (SELECT 1 FROM todos WHERE id = ? AND user_id = ?)
+        AND EXISTS (SELECT 1 FROM tags WHERE id = ? AND user_id = ?)
+    `).run(todoId, tagId, todoId, userId, tagId, userId).changes > 0;
+  },
+
+  findByTodoId(todoId: number): Tag[] {
+    return getDB().prepare<[number], Tag>(`
+      SELECT tags.*
+      FROM tags
+      INNER JOIN todo_tags ON todo_tags.tag_id = tags.id
+      INNER JOIN todos ON todos.id = todo_tags.todo_id
+      WHERE todo_tags.todo_id = ? AND tags.user_id = todos.user_id
+      ORDER BY tags.name COLLATE NOCASE ASC, tags.id ASC
+    `).all(todoId);
   },
 };
 
