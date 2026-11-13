@@ -1,5 +1,7 @@
 # Todo App - Comprehensive User Guide
 
+**Last updated: 2026-11-13 — PRP11 auth scaffold.** Passkey authentication is implemented. The todo and calendar pages are protected **placeholders**. Sections 2–14, task-related tips, troubleshooting, and shortcuts below are retained as **target-feature guidance, not claims of shipped functionality**. Other workshop documents likewise describe targets unless verified against source.
+
 ## Table of Contents
 1. [Authentication](#1-authentication)
 2. [Creating Todos](#2-creating-todos)
@@ -23,18 +25,29 @@
 ## 1. Authentication
 
 ### What It Does
-The app uses modern **WebAuthn/Passkeys** authentication for secure, passwordless access to your todos.
+The app uses **WebAuthn/passkeys** for passwordless access to the protected workspace. Todo creation and calendar functionality are not yet available. Use a modern passkey-capable browser on HTTPS (or `http://localhost:3000` for development).
 
 ### How to Use
-- **Register**: Enter a username and use your device's biometric authentication (fingerprint, face ID) or security key
-- **Login**: Select your username and authenticate with your passkey
-- **Logout**: Click the "Logout" button in the top-right corner
+- **Register**: At `/login`, enter a new username (1–64 characters after trimming), click **Register**, and follow the Windows Hello, Touch ID, Face ID, PIN, synced-passkey, or security-key prompt.
+- **Login**: Enter your existing username, click **Login**, and use a passkey already registered to that account.
+- **Logout**: Click **Logout** in the header. This revokes the current server-side session and clears its cookie; a saved copy of that session cookie cannot restore access. Other sessions are not automatically logged out.
 
-### Benefits
-- ✅ No passwords to remember
-- ✅ More secure than traditional passwords
-- ✅ Works across devices with passkey sync
-- ✅ Uses Singapore timezone for all date/time operations
+### Add a Backup Passkey
+You need **both an existing signed-in session and a working existing passkey**.
+
+1. On either protected page, click **Add passkey**.
+2. Verify an **existing** passkey. This does not save a new passkey or create a replacement login session.
+3. After “Existing passkey verified”, separately click **Save new passkey** and follow the new-device/security-key registration prompt.
+4. Finish saving within **two minutes of verification**. The server grants one enrollment attempt; requesting new-passkey options consumes that one-use grant, and the registration challenge keeps the same deadline.
+
+If cancelled, failed, or expired, start again with **Add passkey** and verify an existing passkey again. Do not use **Register** to add a key to an existing username.
+
+### Sessions and Recovery
+- Sessions last **seven days from creation**, unless revoked earlier (for example, by logout); reloads do not renew the deadline.
+- Normal registration/login challenges expire after five minutes. Existing-passkey re-verification and the enrollment window each have a two-minute limit. Challenges are single-use and browser-bound; enrollment is also bound to the current session.
+- **No account recovery, recovery codes, password reset, or password fallback exists.** Keep a backup passkey; losing every registered passkey means you cannot regain access through this app.
+- Passkey sync depends on your provider/device, not on an app-managed sync service.
+- For setup see [README](README.md). Rate limiting is deferred by PRP11; operators must add trusted-edge throttling before public deployment.
 
 ---
 
@@ -924,6 +937,8 @@ ID,Title,Completed,Due Date,Priority,Recurring,Pattern,Reminder
 ---
 
 ## 12. Calendar View
+
+**Target feature only:** `/calendar` currently shows a protected placeholder, not the calendar described below.
 
 ### What It Does
 Visualize your todos on a monthly calendar to see your schedule at a glance, spot conflicts, and plan ahead.
@@ -1909,16 +1924,16 @@ Linux:
 - ✅ Enable WebAuthn support
 
 **2. Device Support**
-- Ensure device has biometric capability
+- Use a supported platform authenticator (biometrics or PIN), synced passkey, or security key
 - Check security key is working
 - Verify passkey is saved
-- Try different authentication method
+- Try another passkey already registered to this account
 
 **3. Session Issues**
-- Clear cookies
-- Log out and log back in
-- Try incognito mode
-- Register new account to test
+- Sessions expire after seven days; sign in again with an existing passkey.
+- Retry cancelled or expired prompts. For enrollment, repeat **Add passkey**, then **Save new passkey** within two minutes.
+- Check the exact configured origin; localhost and production domains have separate RP configurations.
+- Do not delete the database or expect a new account to recover the old one. No recovery flow exists.
 
 ### General Troubleshooting Steps
 
@@ -1994,44 +2009,25 @@ When reporting issues, include:
 
 ## Feature Summary Checklist
 
-### ✅ Implemented Features
+### Implemented in source (not a test-pass checklist)
 
-- [x] **Authentication**: WebAuthn/Passkeys, passwordless login
-- [x] **Todo Management**: Create, edit, delete, complete todos
-- [x] **Priority Levels**: High/Medium/Low with color coding
-- [x] **Due Dates**: Date-time picker, Singapore timezone
-- [x] **Time Display**: Smart urgency-based formatting
-- [x] **Overdue Tracking**: Separate section, red highlights
-- [x] **Recurring Todos**: Daily/Weekly/Monthly/Yearly patterns
-- [x] **Reminders**: 7 preset timings, browser notifications
-- [x] **Subtasks**: Unlimited subtasks with progress tracking
-- [x] **Progress Bars**: Visual completion percentage
-- [x] **Tags**: Custom color-coded labels, multi-tag support
-- [x] **Tag Management**: Create, edit, delete, filter by tags
-- [x] **Templates**: Save and reuse todo patterns
-- [x] **Template Categories**: Organize templates by category
-- [x] **Search**: Full-text search in titles and subtasks
-- [x] **Quick Filters**: Priority and tag filtering
-- [x] **Advanced Filters**: Completion status, date ranges
-- [x] **Saved Filter Presets**: Store filter combinations
-- [x] **Export JSON**: Complete data backup
-- [x] **Export CSV**: Spreadsheet-friendly format
-- [x] **Import JSON**: Restore from backups
-- [x] **Calendar View**: Monthly visualization
-- [x] **Dark Mode**: Automatic system preference detection
-- [x] **Auto-Sorting**: Priority, due date, creation date
-- [x] **Section Organization**: Overdue, Pending, Completed
-- [x] **Real-time Updates**: Instant UI refresh
-- [x] **User-specific Data**: Multi-user support
-- [x] **Singapore Timezone**: Consistent time handling
+- Passkey registration/login and additional-passkey enrollment after fresh verification
+- Seven-day revocable sessions, logout, current-user API, and protected placeholder pages
+- Auth UI support/cancellation/error handling
+
+### Target features — not implemented
+
+- Todo CRUD, priorities, due dates, recurrence, reminders, and subtasks
+- Tags, templates, search/filtering, export/import, and calendar visualization
+- Task-specific progress, sorting, live updates, and theme behavior described above
 
 ---
 
 ## Version Information
 
-**App Version**: 1.0
-**Last Updated**: November 2025
-**Compatible Browsers**: Chrome 90+, Firefox 88+, Safari 14+, Edge 90+
+**Package Version**: 0.1.0 (PRP11 scaffold)
+**Last Updated**: 2026-11-13
+**Browser requirement**: Modern browser with WebAuthn in a secure context; a cross-browser compatibility matrix has not been verified in this update.
 
 ---
 
@@ -2048,4 +2044,4 @@ For issues, questions, or feature requests:
 
 **End of User Guide**
 
-This guide covers all currently implemented features in the Todo App. Features are continuously being improved and expanded. Keep this guide handy for reference as you use the app!
+Authentication guidance reflects the current scaffold; task-feature sections are future targets. Tests and browser compatibility were not run or verified during this documentation update.

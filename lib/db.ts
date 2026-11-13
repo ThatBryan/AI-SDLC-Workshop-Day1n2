@@ -1,14 +1,16 @@
-import 'server-only';
 import Database from 'better-sqlite3';
-import path from 'node:path';
+import { randomBytes } from 'node:crypto';
+import type { WebAuthnCredential } from '@simplewebauthn/server';
 import type { Priority } from './priority';
-
 export type { Priority } from './priority';
+import { formatSingaporeDate, getSingaporeNow } from './timezone.ts';
+
 export type RecurrencePattern = 'daily' | 'weekly' | 'monthly' | 'yearly';
 
 export interface User {
   id: number;
   username: string;
+  user_handle: string;
   created_at: string;
 }
 
@@ -71,27 +73,77 @@ export interface UpdateTodoInput {
 type TodoRow = Omit<Todo, 'completed' | 'subtasks' | 'tags'> & {
   completed: number;
 };
-
 type SubtaskRow = Omit<Subtask, 'completed'> & { completed: number };
 
-declare global {
-  var __todoDatabase: Database.Database | undefined;
+export interface Authenticator {
+  id: number;
+  user_id: number;
+  credential_id: string;
+  credential_public_key: Buffer;
+  counter: number;
+  created_at: string;
 }
 
-function openDatabase(): Database.Database {
-  const database =
-    globalThis.__todoDatabase ??
-    new Database(
-      process.env.TODO_DB_PATH ?? path.join(process.cwd(), 'todos.db'),
-    );
-  globalThis.__todoDatabase = database;
-  database.pragma('foreign_keys = ON');
-  database.exec(`
+export interface Session {
+  userId: number;
+  username: string;
+  sessionId: string;
+}
+
+export type ChallengePurpose = 'register' | 'login' | 'reauth' | 'enroll';
+export interface Challenge {
+  id: string;
+  purpose: ChallengePurpose;
+  challenge: string;
+  username: string;
+  user_id: number | null;
+  user_handle: string;
+  session_id: string | null;
+  expires_at: number;
+}
+
+const databaseGlobal = globalThis as typeof globalThis & { todoDatabase?: Database.Database };
+
+export function getDB(): Database.Database {
+  if (databaseGlobal.todoDatabase) return databaseGlobal.todoDatabase;
+  const db = new Database(process.env.TODO_DB_PATH || process.env.DATABASE_PATH || 'todos.db');
+  db.pragma('foreign_keys = ON');
+  db.pragma('journal_mode = WAL');
+  db.pragma('busy_timeout = 5000');
+  db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      user_handle TEXT UNIQUE NOT NULL,
+      created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS authenticators (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      credential_id TEXT UNIQUE NOT NULL,
+      credential_public_key BLOB NOT NULL,
+      counter INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_authenticators_user_id ON authenticators(user_id);
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at INTEGER NOT NULL,
+      reauth_until INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS auth_challenges (
+      id TEXT PRIMARY KEY,
+      purpose TEXT NOT NULL,
+      challenge TEXT NOT NULL,
+      username TEXT NOT NULL,
+      user_id INTEGER,
+      user_handle TEXT NOT NULL,
+      session_id TEXT,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_challenges_expiry ON auth_challenges(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
 
     CREATE TABLE IF NOT EXISTS todos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -136,78 +188,55 @@ function openDatabase(): Database.Database {
       PRIMARY KEY (todo_id, tag_id)
     );
   `);
-  return database;
+  databaseGlobal.todoDatabase = db;
+  return db;
 }
 
-const database = openDatabase();
+function getTodoForUser(id: number, userId: number): Todo | undefined {
+  const db = getDB();
+  const row = db
+    .prepare('SELECT * FROM todos WHERE id = ? AND user_id = ?')
+    .get(id, userId) as TodoRow | undefined;
+  if (!row) return undefined;
 
-function mapTodo(row: TodoRow, subtasks: Subtask[], tags: Tag[]): Todo {
+  const subtasks = db
+    .prepare(
+      'SELECT id, todo_id, title, completed, position, created_at FROM subtasks WHERE todo_id = ? ORDER BY position ASC',
+    )
+    .all(id) as SubtaskRow[];
+  const tags = db
+    .prepare(
+      `SELECT tags.id, tags.user_id, tags.name, tags.color, tags.created_at
+       FROM tags
+       INNER JOIN todo_tags ON todo_tags.tag_id = tags.id
+       WHERE todo_tags.todo_id = ?
+       ORDER BY tags.name COLLATE NOCASE ASC`,
+    )
+    .all(id) as Tag[];
+
   return {
     ...row,
     completed: row.completed === 1,
-    subtasks,
+    subtasks: subtasks.map((subtask) => ({
+      ...subtask,
+      completed: subtask.completed === 1,
+    })),
     tags,
   };
 }
 
 function hydrateTodos(rows: TodoRow[]): Todo[] {
-  if (rows.length === 0) return [];
-  const ids = rows.map((row) => row.id);
-  const placeholders = ids.map(() => '?').join(', ');
-  const subtasks = database
-    .prepare(
-      `SELECT id, todo_id, title, completed, position, created_at
-       FROM subtasks WHERE todo_id IN (${placeholders}) ORDER BY position ASC`,
-    )
-    .all(...ids) as SubtaskRow[];
-  const tagRows = database
-    .prepare(
-      `SELECT tags.id, tags.user_id, tags.name, tags.color, tags.created_at, todo_tags.todo_id
-       FROM tags
-       INNER JOIN todo_tags ON todo_tags.tag_id = tags.id
-       WHERE todo_tags.todo_id IN (${placeholders})
-       ORDER BY tags.name COLLATE NOCASE ASC`,
-    )
-    .all(...ids) as (Tag & { todo_id: number })[];
-
-  const subtasksByTodo = new Map<number, Subtask[]>();
-  for (const subtask of subtasks) {
-    const items = subtasksByTodo.get(subtask.todo_id) ?? [];
-    items.push({ ...subtask, completed: subtask.completed === 1 });
-    subtasksByTodo.set(subtask.todo_id, items);
-  }
-
-  const tagsByTodo = new Map<number, Tag[]>();
-  for (const { todo_id, ...tag } of tagRows) {
-    const items = tagsByTodo.get(todo_id) ?? [];
-    items.push(tag);
-    tagsByTodo.set(todo_id, items);
-  }
-
-  return rows.map((row) =>
-    mapTodo(
-      row,
-      subtasksByTodo.get(row.id) ?? [],
-      tagsByTodo.get(row.id) ?? [],
-    ),
-  );
-}
-
-function getTodoForUser(id: number, userId: number): Todo | undefined {
-  const row = database
-    .prepare('SELECT * FROM todos WHERE id = ? AND user_id = ?')
-    .get(id, userId) as TodoRow | undefined;
-  if (!row) return undefined;
-  return hydrateTodos([row])[0];
+  return rows.flatMap((row) => {
+    const todo = getTodoForUser(row.id, row.user_id);
+    return todo ? [todo] : [];
+  });
 }
 
 function validateTagOwnership(tagIds: number[], userId: number): void {
   if (tagIds.length === 0) return;
   const placeholders = tagIds.map(() => '?').join(', ');
-  const rows = database
-    .prepare(
-      `SELECT id FROM tags WHERE user_id = ? AND id IN (${placeholders})`,
-    )
+  const rows = getDB()
+    .prepare(`SELECT id FROM tags WHERE user_id = ? AND id IN (${placeholders})`)
     .all(userId, ...tagIds) as { id: number }[];
   if (rows.length !== new Set(tagIds).size) {
     throw new RangeError('One or more tags were not found for this user');
@@ -216,51 +245,154 @@ function validateTagOwnership(tagIds: number[], userId: number): void {
 
 export const userDB = {
   create(username: string): User {
-    const result = database
-      .prepare('INSERT INTO users (username) VALUES (?)')
-      .run(username);
-    return database
-      .prepare('SELECT id, username, created_at FROM users WHERE id = ?')
-      .get(Number(result.lastInsertRowid)) as User;
+    const handle = randomBytes(32).toString('base64url');
+    const result = getDB().prepare(
+      'INSERT INTO users (username, user_handle, created_at) VALUES (?, ?, ?)',
+    ).run(username, handle, formatSingaporeDate());
+    return userDB.findById(Number(result.lastInsertRowid))!;
+  },
+  findById(id: number) {
+    return getDB().prepare<[number], User>('SELECT * FROM users WHERE id = ?').get(id);
+  },
+  findByUsername(username: string) {
+    return getDB().prepare<[string], User>('SELECT * FROM users WHERE username = ?').get(username);
+  },
+  register(username: string, handle: string, credential: WebAuthnCredential): User {
+    return getDB().transaction(() => {
+      const result = getDB().prepare(
+        'INSERT INTO users (username, user_handle, created_at) VALUES (?, ?, ?)',
+      ).run(username, handle, formatSingaporeDate());
+      const userId = Number(result.lastInsertRowid);
+      authenticatorDB.add(userId, credential);
+      return userDB.findById(userId)!;
+    })();
+  },
+};
+
+export const authenticatorDB = {
+  findByCredentialId(id: string) {
+    return getDB().prepare<[string], Authenticator>(
+      'SELECT * FROM authenticators WHERE credential_id = ?',
+    ).get(id);
+  },
+  listByUserId(userId: number) {
+    return getDB().prepare<[number], Authenticator>(
+      'SELECT * FROM authenticators WHERE user_id = ? ORDER BY id',
+    ).all(userId);
+  },
+  add(userId: number, credential: WebAuthnCredential) {
+    getDB().prepare(`
+      INSERT INTO authenticators (user_id, credential_id, credential_public_key, counter, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(userId, credential.id, Buffer.from(credential.publicKey), credential.counter ?? 0, formatSingaporeDate());
+  },
+  addForSession(session: Session, credential: WebAuthnCredential, expiresAt: number): boolean {
+    return getDB().transaction(() => {
+      if (expiresAt <= getSingaporeNow().getTime() ||
+          !sessionDB.isActive(session.sessionId, session.userId)) return false;
+      authenticatorDB.add(session.userId, credential);
+      return true;
+    }).immediate();
+  },
+  updateCounter(id: number, previous: number, next: number): boolean {
+    return getDB().prepare(
+      'UPDATE authenticators SET counter = ? WHERE id = ? AND counter = ?',
+    ).run(next ?? 0, id, previous ?? 0).changes === 1;
+  },
+};
+
+export const sessionDB = {
+  create(id: string, userId: number, expiresAt: number) {
+    getDB().prepare('DELETE FROM sessions WHERE expires_at <= ?').run(getSingaporeNow().getTime());
+    getDB().prepare('INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)').run(id, userId, expiresAt);
+  },
+  isActive(id: string, userId: number): boolean {
+    return !!getDB().prepare(
+      'SELECT id FROM sessions WHERE id = ? AND user_id = ? AND expires_at > ?',
+    ).get(id, userId, getSingaporeNow().getTime());
+  },
+  revoke(id: string) {
+    getDB().prepare('DELETE FROM sessions WHERE id = ?').run(id);
+    getDB().prepare('DELETE FROM auth_challenges WHERE session_id = ?').run(id);
+  },
+  grantEnrollment(session: Session, expiresAt: number): boolean {
+    return getDB().prepare(`
+      UPDATE sessions SET reauth_until = ? WHERE id = ? AND user_id = ? AND expires_at > ?
+    `).run(expiresAt, session.sessionId, session.userId, getSingaporeNow().getTime()).changes === 1;
+  },
+  consumeEnrollment(session: Session): number | undefined {
+    const now = getSingaporeNow().getTime();
+    return getDB().transaction(() => {
+      const row = getDB().prepare<[string, number, number, number], { reauth_until: number }>(`
+        SELECT reauth_until FROM sessions
+        WHERE id = ? AND user_id = ? AND expires_at > ? AND reauth_until > ?
+      `).get(session.sessionId, session.userId, now, now);
+      if (!row) return undefined;
+      getDB().prepare('UPDATE sessions SET reauth_until = NULL WHERE id = ?').run(session.sessionId);
+      return row.reauth_until;
+    }).immediate();
+  },
+};
+
+export const challengeStore = {
+  save(challenge: Omit<Challenge, 'id'>): string {
+    const id = randomBytes(32).toString('base64url');
+    getDB().prepare('DELETE FROM auth_challenges WHERE expires_at <= ?').run(getSingaporeNow().getTime());
+    getDB().prepare(`
+      INSERT INTO auth_challenges
+      (id, purpose, challenge, username, user_id, user_handle, session_id, expires_at)
+      VALUES (@id, @purpose, @challenge, @username, @user_id, @user_handle, @session_id, @expires_at)
+    `).run({ ...challenge, id });
+    return id;
+  },
+  remove(id: string) {
+    getDB().prepare('DELETE FROM auth_challenges WHERE id = ?').run(id);
+  },
+  consume(id: string): Challenge | undefined {
+    // Delete before asynchronous verification: even simultaneous attempts have one winner.
+    return getDB().prepare<[string, number], Challenge>(`
+      DELETE FROM auth_challenges WHERE id = ? AND expires_at > ? RETURNING *
+    `).get(id, getSingaporeNow().getTime());
   },
 };
 
 export const todoDB = {
   create(input: CreateTodoInput): Todo {
+    const db = getDB();
     const tagIds = input.tag_ids ?? [];
-    return database.transaction(() => {
+    return db.transaction(() => {
       validateTagOwnership(tagIds, input.user_id);
-      const result = database
-        .prepare(
-          `INSERT INTO todos
-            (user_id, title, due_date, priority, is_recurring, recurrence_pattern, reminder_minutes)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          input.user_id,
-          input.title,
-          input.due_date ?? null,
-          input.priority ?? 'medium',
-          input.is_recurring ? 1 : 0,
-          input.recurrence_pattern ?? null,
-          input.reminder_minutes ?? null,
-        );
-      const todoId = Number(result.lastInsertRowid);
-      const attachTag = database.prepare(
+      const result = db.prepare(`
+        INSERT INTO todos
+          (user_id, title, due_date, priority, is_recurring, recurrence_pattern, reminder_minutes)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.user_id,
+        input.title,
+        input.due_date ?? null,
+        input.priority ?? 'medium',
+        input.is_recurring ? 1 : 0,
+        input.recurrence_pattern ?? null,
+        input.reminder_minutes ?? null,
+      );
+      const id = Number(result.lastInsertRowid);
+      const attachTag = db.prepare(
         'INSERT INTO todo_tags (todo_id, tag_id) VALUES (?, ?)',
       );
-      for (const tagId of tagIds) attachTag.run(todoId, tagId);
-      return getTodoForUser(todoId, input.user_id)!;
+      for (const tagId of tagIds) attachTag.run(id, tagId);
+      const created = getTodoForUser(id, input.user_id);
+      if (!created) throw new Error('Created todo could not be reloaded');
+      return created;
     })();
   },
 
   findAllByUser(userId: number, priority?: Priority): Todo[] {
-    const rows = database
-      .prepare(
-        `SELECT * FROM todos
-         WHERE user_id = ? AND (? IS NULL OR priority = ?)
-         ORDER BY created_at DESC`,
-      )
+    const rows = getDB()
+      .prepare(`
+        SELECT * FROM todos
+        WHERE user_id = ? AND (? IS NULL OR priority = ?)
+        ORDER BY created_at DESC
+      `)
       .all(userId, priority ?? null, priority ?? null) as TodoRow[];
     return hydrateTodos(rows);
   },
@@ -275,6 +407,7 @@ export const todoDB = {
     input: UpdateTodoInput,
     updatedAt: string,
   ): Todo | undefined {
+    const db = getDB();
     const fields: string[] = [];
     const values: (string | number | null)[] = [];
     const assignments: Array<[keyof UpdateTodoInput, string, unknown]> = [
@@ -291,16 +424,18 @@ export const todoDB = {
       if (!Object.hasOwn(input, key)) continue;
       fields.push(`${column} = ?`);
       values.push(
-        typeof value === 'boolean' ? (value ? 1 : 0) : (value as string | number | null),
+        typeof value === 'boolean'
+          ? Number(value)
+          : (value as string | number | null),
       );
     }
 
-    return database.transaction(() => {
+    return db.transaction(() => {
       if (!getTodoForUser(id, userId)) return undefined;
       if (input.tag_ids !== undefined) {
         validateTagOwnership(input.tag_ids, userId);
-        database.prepare('DELETE FROM todo_tags WHERE todo_id = ?').run(id);
-        const attachTag = database.prepare(
+        db.prepare('DELETE FROM todo_tags WHERE todo_id = ?').run(id);
+        const attachTag = db.prepare(
           'INSERT INTO todo_tags (todo_id, tag_id) VALUES (?, ?)',
         );
         for (const tagId of input.tag_ids) attachTag.run(id, tagId);
@@ -309,18 +444,16 @@ export const todoDB = {
       if (fields.length > 0) {
         fields.push('updated_at = ?');
         values.push(updatedAt, id, userId);
-        database
-          .prepare(
-            `UPDATE todos SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`,
-          )
-          .run(...values);
+        db.prepare(
+          `UPDATE todos SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`,
+        ).run(...values);
       }
       return getTodoForUser(id, userId);
     })();
   },
 
   deleteForUser(id: number, userId: number): boolean {
-    const result = database
+    const result = getDB()
       .prepare('DELETE FROM todos WHERE id = ? AND user_id = ?')
       .run(id, userId);
     return result.changes > 0;

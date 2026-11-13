@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { expect, test } from '@playwright/test';
+import { expect, test, uniqueUsername } from './helpers';
 import { createTodo } from './helpers';
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page, auth, passkeys }) => {
   await page.goto('/');
+  await auth.expectLogin();
+  await auth.register(uniqueUsername());
+  await passkeys.onlyCredential();
   await expect(page.getByRole('region', { name: 'Pending' })).toBeVisible();
 });
 
@@ -16,6 +19,7 @@ test('shows a labeled badge for each priority', async ({ page }) => {
 });
 
 test('uses the required badge colors in light and dark mode', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' });
   const expectedColors = {
     high: '#EF4444',
     medium: '#F59E0B',
@@ -34,7 +38,7 @@ test('uses the required badge colors in light and dark mode', async ({ page }) =
   const lightTextColors = await Promise.all(
     badges.map((badge) => badge.evaluate((element) => getComputedStyle(element).color)),
   );
-  await page.locator('html').evaluate((element) => element.classList.add('dark'));
+  await page.emulateMedia({ colorScheme: 'dark' });
   const darkTextColors = await Promise.all(
     badges.map((badge) => badge.evaluate((element) => getComputedStyle(element).color)),
   );
@@ -93,31 +97,29 @@ test('editing priority immediately changes the badge and sorted position', async
   ).toBeVisible();
 });
 
-test('invalid priority on create and update returns 400 without changing stored todos', async ({
-  request,
-}) => {
+test('invalid priority on create and update returns 400 without changing stored todos', async ({ page }) => {
   const invalidTitle = `invalid priority ${randomUUID()}`;
-  const invalidCreate = await request.post('/api/todos', {
+  const invalidCreate = await page.request.post('/api/todos', {
     data: { title: invalidTitle, priority: 'urgent' },
   });
   expect(invalidCreate.status()).toBe(400);
 
-  const absentFromList = await request.get('/api/todos');
+  const absentFromList = await page.request.get('/api/todos');
   const todos = (await absentFromList.json()) as Array<{ title: string }>;
   expect(todos.some((todo) => todo.title === invalidTitle)).toBe(false);
 
   const title = `priority stays ${randomUUID()}`;
-  const created = await request.post('/api/todos', {
+  const created = await page.request.post('/api/todos', {
     data: { title, priority: 'medium' },
   });
   expect(created.status()).toBe(201);
   const todo = (await created.json()) as { id: number; priority: string };
-  const invalidUpdate = await request.put(`/api/todos/${todo.id}`, {
+  const invalidUpdate = await page.request.put(`/api/todos/${todo.id}`, {
     data: { priority: null },
   });
   expect(invalidUpdate.status()).toBe(400);
 
-  const unchanged = await request.get(`/api/todos/${todo.id}`);
+  const unchanged = await page.request.get(`/api/todos/${todo.id}`);
   expect(unchanged.status()).toBe(200);
   expect((await unchanged.json()).priority).toBe('medium');
 });

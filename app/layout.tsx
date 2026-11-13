@@ -3,7 +3,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Todo App',
-  description: 'A simple, prioritized todo list.',
+  description: 'Your tasks, secured with passkeys.',
 };
 
 export default function RootLayout({

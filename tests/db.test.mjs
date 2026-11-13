@@ -3,7 +3,7 @@ import test from 'node:test';
 
 process.env.TODO_DB_PATH = ':memory:';
 
-const { todoDB, userDB } = await import('../lib/db.ts');
+const { getDB, todoDB, userDB } = await import('../lib/db.ts');
 
 test('todo database applies defaults and scopes reads, updates, and deletes by user', () => {
   const firstUser = userDB.create('first-user');
@@ -50,5 +50,35 @@ test('todo creation enforces the user foreign key', () => {
   assert.throws(
     () => todoDB.create({ user_id: 999, title: 'No matching user' }),
     /FOREIGN KEY constraint failed/,
+  );
+});
+
+test('deleting a todo cascades to subtasks and tag associations, not the tag', () => {
+  const user = userDB.create('cascade-user');
+  const todo = todoDB.create({ user_id: user.id, title: 'Cascade test' });
+  const db = getDB();
+  const tag = db
+    .prepare('INSERT INTO tags (user_id, name) VALUES (?, ?) RETURNING id')
+    .get(user.id, 'cascade-tag');
+  db.prepare('INSERT INTO subtasks (todo_id, title) VALUES (?, ?)')
+    .run(todo.id, 'Cascade subtask');
+  db.prepare('INSERT INTO todo_tags (todo_id, tag_id) VALUES (?, ?)')
+    .run(todo.id, tag.id);
+
+  assert.equal(todoDB.deleteForUser(todo.id, user.id), true);
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS count FROM subtasks WHERE todo_id = ?')
+      .get(todo.id).count,
+    0,
+  );
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS count FROM todo_tags WHERE todo_id = ?')
+      .get(todo.id).count,
+    0,
+  );
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS count FROM tags WHERE id = ?')
+      .get(tag.id).count,
+    1,
   );
 });

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { AuthenticatedShell } from '@/components/authenticated-shell';
 import { PriorityBadge } from '@/components/PriorityBadge';
 import type { Priority, Todo } from '@/lib/db';
 import { getSingaporeNow, formatSingaporeDateTimeInput, parseSingaporeDateTime } from '@/lib/timezone';
@@ -132,7 +133,7 @@ function TodoSection({
   );
 }
 
-export default function HomePage() {
+function TodoDashboard() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [title, setTitle] = useState('');
   const [dueDate, setDueDate] = useState('');
@@ -384,12 +385,12 @@ export default function HomePage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-8 px-4 py-10 sm:px-6">
+    <div className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-8 px-4 py-10 sm:px-6">
       <header className="space-y-2">
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">
           Stay focused
         </p>
-        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">My Todos</h1>
+        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">My todos</h1>
         <p className="text-slate-600 dark:text-slate-400">
           Capture tasks, set priorities, and keep your next steps clear.
         </p>
@@ -528,6 +529,14 @@ export default function HomePage() {
           </form>
         </div>
       )}
-    </main>
+    </div>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <AuthenticatedShell>
+      <TodoDashboard />
+    </AuthenticatedShell>
   );
 }

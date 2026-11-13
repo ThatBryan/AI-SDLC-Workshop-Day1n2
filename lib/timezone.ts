@@ -1,4 +1,4 @@
-const SINGAPORE_TIME_ZONE = 'Asia/Singapore';
+export const SINGAPORE_TIMEZONE = 'Asia/Singapore';
 
 type DateTimeParts = {
   year: number;
@@ -10,7 +10,7 @@ type DateTimeParts = {
 };
 
 const singaporeDateTimeFormatter = new Intl.DateTimeFormat('en-GB', {
-  timeZone: SINGAPORE_TIME_ZONE,
+  timeZone: SINGAPORE_TIMEZONE,
   year: 'numeric',
   month: '2-digit',
   day: '2-digit',
@@ -188,7 +188,7 @@ export function parseSingaporeDateTime(value: unknown): Date | null {
   return Number.isFinite(parsed.getTime()) ? parsed : null;
 }
 
-export function formatSingaporeDate(date: Date): string {
+export function formatSingaporeDate(date: Date = getSingaporeNow()): string {
   const { year, month, day } = getSingaporeDateTimeParts(date);
   return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
