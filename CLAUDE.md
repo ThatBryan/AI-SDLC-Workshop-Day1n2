@@ -1,10 +1,8 @@
 # Todo App - Claude Code Instructions
 
-## ⚠️ Current Repository State
+## Current Repository State
 
-This repository currently contains **planning and reference documentation only** — `README.md`, `USER_GUIDE.md`, `EVALUATION.md`, `PRPs/*.md`, and `.github/copilot-instructions.md` describe the **target implementation** of a Todo App. The actual Next.js source code (`app/`, `lib/`, `middleware.ts`, `package.json`, `tests/`, etc.) does not exist in this repo yet.
-
-Everything below describes the architecture and conventions the app **must follow once implemented**. When asked to build or extend a feature, scaffold the project structure described here rather than assuming it already exists — check with `ls`/`find` first.
+The repository began as planning and reference documentation and now includes a Next.js scaffold for Todo CRUD (PRP 01) and Priority (PRP 02), Singapore date helpers, and unit and Playwright coverage. Authentication UI/WebAuthn and the remaining feature PRPs are not yet integrated. Check the existing source and working-tree changes before extending it.
 
 ## Architecture Overview
 
@@ -91,21 +89,17 @@ npm install
 npm run dev           # Start dev server on :3000
 npm run build         # Production build
 npm run lint          # ESLint check
+npm run typecheck     # TypeScript check
 ```
 
 ### Testing
 ```bash
-npx playwright test                    # Run all E2E tests
-npx playwright test --ui              # Interactive UI mode
-npx playwright test tests/02-todo-crud.spec.ts  # Single test file
-npx playwright show-report            # View HTML report
+npm run test:unit      # Run unit tests
+npm run test:e2e       # Run CRUD and priority browser tests
+npx playwright install chromium  # One-time browser setup
 ```
 
-**Virtual WebAuthn Authenticators:**
-- Tests use virtual authenticators (configured in `playwright.config.ts` with Chromium flags)
-- Set `timezoneId: 'Asia/Singapore'` in Playwright config to match app timezone
-- Test files organized by feature (`01-authentication`, `02-todo-crud`, etc.) matching `USER_GUIDE.md` order
-- Helper class `tests/helpers.ts` provides reusable methods: `createTodo()`, `addSubtask()`, `createTag()`
+Playwright global setup creates a test-only signed session; these feature tests do not cover WebAuthn authentication. The browser context uses `Asia/Singapore` to match the app timezone. `tests/helpers.ts` provides a reusable `createTodo()` helper.
 
 ### Database Management
 ```bash
