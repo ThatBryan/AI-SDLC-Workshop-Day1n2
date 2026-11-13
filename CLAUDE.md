@@ -104,7 +104,7 @@ Playwright global setup creates a test-only signed session; these feature tests 
 ### Database Management
 ```bash
 # Seed Singapore holidays
-npx tsx scripts/seed-holidays.ts
+npm run seed:holidays
 
 # Inspect database (SQLite CLI)
 sqlite3 todos.db

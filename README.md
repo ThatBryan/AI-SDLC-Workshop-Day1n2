@@ -2,9 +2,9 @@
 
 This walkthrough will guide you from zero to running the Todo App with GitHub Copilot assistance.
 
-## Implemented status — PRP11 auth scaffold
+## Implemented status — PRPs 01, 02, 09, 10, and 11
 
-**Last updated: 2026-11-13.** Implemented: passkey registration/login, seven-day revocable sessions, logout, protected routes, and additional-passkey enrollment after verifying an existing passkey. `/` (todos) and `/calendar` are **protected placeholders**, not working todo/calendar features. Other feature documentation and workshop checklists describe **target features, not shipped functionality**.
+**Last updated: 2026-11-13.** Implemented: passkey registration/login, seven-day revocable sessions, logout, protected routes, additional-passkey enrollment, todo CRUD and priority, JSON/CSV export and JSON import, and the Singapore-timezone monthly calendar. PRPs 03–08 remain documented target features, not shipped functionality.
 
 ### Quick start (Windows PowerShell, Node.js >=22.13.0)
 
@@ -23,6 +23,14 @@ npm run dev
 ```
 
 Open **http://localhost:3000/login** in a passkey-capable browser. Use that exact origin (not `127.0.0.1`); if changing ports, change `RP_ORIGIN` too.
+
+Seed Singapore public holidays from the Ministry of Manpower calendar before viewing holidays in the calendar:
+
+```powershell
+npm run seed:holidays
+```
+
+The bundled dates cover 2025–2027; update them when MOM publishes or revises future years.
 
 **Production:** use HTTPS and your actual public hostname, for example `RP_ID=todo.example.com`, `RP_ORIGIN=https://todo.example.com`, `RP_NAME=Todo App`. RP ID has no scheme/port/path; RP origin is the exact browser origin, with no path or trailing slash (include a non-default port if used). The origin hostname must equal RP ID or be its subdomain. HTTP localhost is development-only; production cookies are Secure. Supply a private generated `SESSION_SECRET` and set `DATABASE_PATH` to a writable persistent location on a **single host**; SQLite is not suitable for ephemeral serverless storage or independent multi-host replicas.
 

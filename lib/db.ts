@@ -4,6 +4,7 @@ import type { WebAuthnCredential } from '@simplewebauthn/server';
 import type { Priority } from './priority';
 export type { Priority } from './priority';
 import { formatSingaporeDate, getSingaporeNow } from './timezone.ts';
+import type { ImportTodoInput } from './todoImport.ts';
 
 export type RecurrencePattern = 'daily' | 'weekly' | 'monthly' | 'yearly';
 
@@ -39,6 +40,18 @@ export interface CreateTagInput {
 export interface UpdateTagInput {
   name?: string;
   color?: string;
+}
+
+export interface Holiday {
+  id: number;
+  date: string;
+  name: string;
+}
+
+export interface ImportResult {
+  imported: number;
+  tagsCreated: number;
+  tagsReused: number;
 }
 
 export interface Todo {
@@ -199,6 +212,14 @@ export function getDB(): Database.Database {
       PRIMARY KEY (todo_id, tag_id)
     );
     CREATE INDEX IF NOT EXISTS idx_todo_tags_tag_id ON todo_tags(tag_id);
+
+    CREATE TABLE IF NOT EXISTS holidays (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_holidays_date ON holidays(date);
   `);
   databaseGlobal.todoDatabase = db;
   return db;
@@ -549,5 +570,133 @@ export const todoDB = {
       .prepare('DELETE FROM todos WHERE id = ? AND user_id = ?')
       .run(id, userId);
     return result.changes > 0;
+  },
+
+  importAll(userId: number, items: ImportTodoInput[]): ImportResult {
+    const db = getDB();
+    let tagsCreated = 0;
+    let tagsReused = 0;
+    const importItems = db.transaction(() => {
+      const insertTodo = db.prepare(`
+        INSERT INTO todos
+          (user_id, title, completed, due_date, priority, is_recurring,
+           recurrence_pattern, reminder_minutes, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const insertSubtask = db.prepare(`
+        INSERT INTO subtasks (todo_id, title, completed, position)
+        VALUES (?, ?, ?, ?)
+      `);
+      const findTagByName = db.prepare(`
+        SELECT id FROM tags
+        WHERE user_id = ? AND name = ? COLLATE NOCASE
+        ORDER BY id ASC LIMIT 1
+      `);
+      const insertTag = db.prepare(
+        'INSERT INTO tags (user_id, name, color) VALUES (?, ?, ?)',
+      );
+      const linkTag = db.prepare(
+        'INSERT INTO todo_tags (todo_id, tag_id) VALUES (?, ?)',
+      );
+
+      for (const item of items) {
+        const todoId = Number(insertTodo.run(
+          userId,
+          item.title,
+          Number(item.completed),
+          item.due_date,
+          item.priority,
+          Number(item.is_recurring),
+          item.recurrence_pattern,
+          item.reminder_minutes,
+          item.created_at,
+        ).lastInsertRowid);
+
+        item.subtasks.forEach((subtask, index) => {
+          insertSubtask.run(todoId, subtask.title, Number(subtask.completed), index);
+        });
+
+        const linkedTagIds = new Set<number>();
+        for (const tag of item.tags) {
+          const existing = findTagByName.get(userId, tag.name) as { id: number } | undefined;
+          let tagId: number;
+          if (existing) {
+            tagId = existing.id;
+            tagsReused += 1;
+          } else {
+            tagId = Number(insertTag.run(userId, tag.name, tag.color).lastInsertRowid);
+            tagsCreated += 1;
+          }
+          if (linkedTagIds.has(tagId)) continue;
+          linkedTagIds.add(tagId);
+          linkTag.run(todoId, tagId);
+        }
+      }
+    });
+
+    importItems.immediate();
+    return { imported: items.length, tagsCreated, tagsReused };
+  },
+};
+
+function utcDateKey(date: Date): string {
+  return [
+    String(date.getUTCFullYear()).padStart(4, '0'),
+    String(date.getUTCMonth() + 1).padStart(2, '0'),
+    String(date.getUTCDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+function makeUtcDate(year: number, month: number, day: number): Date {
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(0, 0, 0, 0);
+  return date;
+}
+
+export const holidayDB = {
+  findAll(): Holiday[] {
+    return getDB()
+      .prepare('SELECT id, date, name FROM holidays ORDER BY date ASC')
+      .all() as Holiday[];
+  },
+
+  findByMonth(year: number, month: number): Holiday[] {
+    if (
+      !Number.isInteger(year) ||
+      year < 1 ||
+      year > 9999 ||
+      !Number.isInteger(month) ||
+      month < 1 ||
+      month > 12
+    ) {
+      throw new RangeError('Holiday year must be 1–9999 and month must be 1–12');
+    }
+
+    const firstOfMonth = makeUtcDate(year, month, 1);
+    const start = new Date(
+      firstOfMonth.getTime() - firstOfMonth.getUTCDay() * 24 * 60 * 60 * 1000,
+    );
+    const end = new Date(start.getTime() + 41 * 24 * 60 * 60 * 1000);
+    return getDB()
+      .prepare(`
+        SELECT id, date, name FROM holidays
+        WHERE date >= ? AND date <= ?
+        ORDER BY date ASC
+      `)
+      .all(utcDateKey(start), utcDateKey(end)) as Holiday[];
+  },
+
+  upsertMany(holidays: Array<Pick<Holiday, 'date' | 'name'>>): void {
+    const db = getDB();
+    const insertHoliday = db.prepare(`
+      INSERT INTO holidays (date, name) VALUES (?, ?)
+      ON CONFLICT(date) DO UPDATE SET name = excluded.name
+    `);
+    db.transaction(() => {
+      for (const holiday of holidays) {
+        insertHoliday.run(holiday.date, holiday.name);
+      }
+    }).immediate();
   },
 };
