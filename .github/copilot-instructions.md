@@ -104,7 +104,7 @@ npx playwright show-report            # View HTML report
 ### Database Management
 ```bash
 # Seed Singapore holidays
-npx tsx scripts/seed-holidays.ts
+npm run seed:holidays
 
 # Inspect database (SQLite CLI)
 sqlite3 todos.db

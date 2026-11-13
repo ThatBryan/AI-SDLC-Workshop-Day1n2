@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "node --conditions=react-server --experimental-strip-types --test tests/*.test.mjs",
+    "seed:holidays": "node --conditions=react-server --experimental-strip-types scripts/seed-holidays.ts",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test"
   },

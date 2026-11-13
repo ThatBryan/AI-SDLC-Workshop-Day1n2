@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { AuthenticatedShell } from '@/components/authenticated-shell';
+import { ExportImportToolbar } from '@/components/ExportImportToolbar';
 import { PriorityBadge } from '@/components/PriorityBadge';
 import type { Priority, Todo } from '@/lib/db';
 import { getSingaporeNow, formatSingaporeDateTimeInput, parseSingaporeDateTime } from '@/lib/timezone';
@@ -144,6 +145,7 @@ function TodoDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [clockNow, setClockNow] = useState(getSingaporeNow);
+  const [reloadVersion, setReloadVersion] = useState(0);
   const optimisticId = useRef(0);
 
   useEffect(() => {
@@ -173,7 +175,7 @@ function TodoDashboard() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [reloadVersion]);
 
   useEffect(() => {
     if (!editingTodo) return;
@@ -394,6 +396,7 @@ function TodoDashboard() {
         <p className="text-slate-600 dark:text-slate-400">
           Capture tasks, set priorities, and keep your next steps clear.
         </p>
+        <ExportImportToolbar onImported={() => setReloadVersion((version) => version + 1)} />
       </header>
 
       {error && <ErrorMessage>{error}</ErrorMessage>}
