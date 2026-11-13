@@ -2,7 +2,47 @@
 
 This walkthrough will guide you from zero to running the Todo App with GitHub Copilot assistance.
 
-Reference : https://ai-sdlc-workshop-day1-production.up.railway.app/login
+## Implemented status — PRP11 auth scaffold
+
+**Last updated: 2026-11-13.** Implemented: passkey registration/login, seven-day revocable sessions, logout, protected routes, and additional-passkey enrollment after verifying an existing passkey. `/` (todos) and `/calendar` are **protected placeholders**, not working todo/calendar features. Other feature documentation and workshop checklists describe **target features, not shipped functionality**.
+
+### Quick start (Windows PowerShell, Node.js >=22.13.0)
+
+From the repository directory:
+
+```powershell
+npm install
+Copy-Item .env.example .env.local
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+```
+
+Paste the generated value into `SESSION_SECRET=` in `.env.local`; keep it private and never commit it. Leave `RP_NAME=Todo App`, `RP_ID=localhost`, `RP_ORIGIN=http://localhost:3000`, and `DATABASE_PATH=todos.db` for development, then:
+
+```powershell
+npm run dev
+```
+
+Open **http://localhost:3000/login** in a passkey-capable browser. Use that exact origin (not `127.0.0.1`); if changing ports, change `RP_ORIGIN` too.
+
+**Production:** use HTTPS and your actual public hostname, for example `RP_ID=todo.example.com`, `RP_ORIGIN=https://todo.example.com`, `RP_NAME=Todo App`. RP ID has no scheme/port/path; RP origin is the exact browser origin, with no path or trailing slash (include a non-default port if used). The origin hostname must equal RP ID or be its subdomain. HTTP localhost is development-only; production cookies are Secure. Supply a private generated `SESSION_SECRET` and set `DATABASE_PATH` to a writable persistent location on a **single host**; SQLite is not suitable for ephemeral serverless storage or independent multi-host replicas.
+
+**Deployment blocker:** rate limiting is explicitly deferred by PRP11. Add trusted-edge throttling before public deployment.
+
+### Validation scripts
+
+| Command | Manifest script |
+|---------|-----------------|
+| `npm test` | Unit tests: `vitest run` |
+| `npm run test:coverage` | `vitest run --coverage` |
+| `npm run test:e2e` | `playwright test` |
+| `npm run build` | `next build` |
+| `npm run lint` | `eslint .` |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm start` | `next start` (after build, with production config) |
+
+Playwright uses Chromium, a separate dev server on localhost:3100, and a per-run temporary SQLite database. Browser installation may be needed (`npx playwright install chromium`).
+
+PRP11 validation: 100 unit/integration tests and 14 Chromium E2E tests passed, along with lint, typecheck, and production build. Unit/integration coverage is 96.11% lines and 83.09% branches. Counterless authenticator behavior is tested with genuinely signed assertions; Chromium virtual authenticators cover incrementing/stale counters and two-device enrollment. Real device prompts and their timing still need manual acceptance testing.
 
 ---
 
@@ -119,12 +159,12 @@ If you see suggestions, Copilot is working! ✅
 
 ## 3. Install Node.js
 
-The Todo App requires **Node.js 20+** and **npm**.
+The Todo App requires **Node.js >=22.13.0** and **npm**.
 
 ### Windows
 1. Visit https://nodejs.org/
 2. Download **"LTS"** version (recommended)
-3. Run installer (`node-v20.x.x-x64.msi`)
+3. Run a Node.js installer for version 22.13.0 or newer
 4. Follow wizard:
    - ✅ Accept license
    - ✅ Keep default installation path
@@ -144,7 +184,7 @@ The Todo App requires **Node.js 20+** and **npm**.
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
 # Install Node.js
-brew install node@20
+brew install node@22
 
 # Verify
 node --version
@@ -153,8 +193,8 @@ npm --version
 
 ### Linux (Ubuntu/Debian)
 ```bash
-# Install Node.js 20.x
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+# Install Node.js 22.x (22.13.0 or newer)
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
 # Verify installation
@@ -165,8 +205,8 @@ npm --version
 ### Verify Node.js Installation
 Open terminal and run:
 ```bash
-node --version  # Should show v20.x.x or higher
-npm --version   # Should show 10.x.x or higher
+node --version  # Must be v22.13.0 or higher
+npm --version
 ```
 
 ---
@@ -190,25 +230,15 @@ If you already have the project folder:
 cd /path/to/todo-app
 ```
 
-### Install Dependencies
-```bash
-# Install all npm packages (this may take a few minutes)
-npm install
-```
-
-You should see output like:
-```
-added 345 packages, and audited 346 packages in 45s
-```
+### Install Dependencies and Configure Authentication
+Follow the [Windows quick start](#quick-start-windows-powershell-nodejs-22130) above, including the environment-file copy and secret generation **before** starting the server.
 
 ### Project Structure Verification
 Ensure you have these key files:
 ```
 todo-app/
-├── .github/
-│   ├── copilot-instructions.md    ← Copilot will read this
-│   └── PRPs/
-│       └── todo-app-core-features.md  ← Product requirements
+├── PRPs/
+│   └── 11-authentication-webauthn.md
 ├── app/
 │   ├── page.tsx
 │   ├── layout.tsx
@@ -216,7 +246,10 @@ todo-app/
 ├── lib/
 │   ├── db.ts
 │   ├── auth.ts
+│   ├── webauthn.ts
 │   └── timezone.ts
+├── proxy.ts                     ← Next.js 16 route protection
+├── .env.example
 ├── package.json
 ├── next.config.ts
 └── README.md
@@ -231,15 +264,7 @@ todo-app/
 npm run dev
 ```
 
-Expected output:
-```
-  ▲ Next.js 16.0.1
-  - Local:        http://localhost:3000
-  - Environments: .env.local
-
- ✓ Starting...
- ✓ Ready in 1.5s
-```
+The development server uses `.env.local`. Keep port 3000 available so its browser origin matches the development RP configuration.
 
 ### Access the Application
 1. Open browser
@@ -252,10 +277,10 @@ Expected output:
    - Click "Register"
    - Follow WebAuthn prompt (use fingerprint/face ID/PIN)
    
-2. **Create your first todo**:
-   - Enter todo title: "Test my first todo"
-   - Click "Add"
-   - Todo appears in list ✅
+2. **Explore the authenticated scaffold**:
+   - Confirm your username appears on the protected placeholder page.
+   - Use **Add passkey**, verify an existing passkey, then separately click **Save new passkey** and finish within two minutes.
+   - Todo creation and calendar functionality are not implemented yet.
 
 ### Stop the Server
 Press `Ctrl+C` in the terminal running `npm run dev`
@@ -285,7 +310,7 @@ code .
 @workspace What are the acceptance criteria for the recurring todos feature?
 ```
 
-Copilot will reference `.github/PRPs/todo-app-core-features.md` and list:
+Use the feature requirements in `PRPs/` as the target specification, for example:
 - Can create recurring todo with pattern
 - Completing recurring todo creates next instance
 - Next instance has correct due date
@@ -344,9 +369,9 @@ Copilot will create code that:
 
 ## 7. Verify Core Features
 
-Use this checklist to verify the app is working correctly.
+Authentication below is a manual verification checklist, **not a recorded pass**. All remaining checklists in this section are **future acceptance targets**, unavailable in the current scaffold.
 
-### ✅ Authentication
+### Authentication — manual checks
 ```bash
 # Open http://localhost:3000/login
 1. Register with username: "copilot-test-user"
@@ -356,7 +381,7 @@ Use this checklist to verify the app is working correctly.
 5. Verify session persists after page reload
 ```
 
-### ✅ Todo CRUD
+### Planned: Todo CRUD
 ```
 1. Create todo: "Buy groceries"
 2. Set priority: High
@@ -366,7 +391,7 @@ Use this checklist to verify the app is working correctly.
 6. Delete todo
 ```
 
-### ✅ Recurring Todos
+### Planned: Recurring Todos
 ```
 1. Create todo: "Daily standup"
 2. Check "Repeat" checkbox
@@ -376,7 +401,7 @@ Use this checklist to verify the app is working correctly.
 6. Verify new instance created for next day
 ```
 
-### ✅ Subtasks
+### Planned: Subtasks
 ```
 1. Create todo: "Prepare presentation"
 2. Click to expand subtasks
@@ -386,7 +411,7 @@ Use this checklist to verify the app is working correctly.
 6. Verify progress shows "1/2 completed (50%)"
 ```
 
-### ✅ Tags
+### Planned: Tags
 ```
 1. Click "Manage Tags" button
 2. Create tag: "work" (color: #3B82F6)
@@ -396,7 +421,7 @@ Use this checklist to verify the app is working correctly.
 6. Verify only tagged todos shown
 ```
 
-### ✅ Templates
+### Planned: Templates
 ```
 1. Create todo with desired settings
 2. Click "Save as Template"
@@ -406,7 +431,7 @@ Use this checklist to verify the app is working correctly.
 6. Verify new todo created with all settings
 ```
 
-### ✅ Reminders
+### Planned: Reminders
 ```
 1. Click "Enable Notifications" (grant permission)
 2. Create todo with due date in 20 minutes
@@ -415,7 +440,7 @@ Use this checklist to verify the app is working correctly.
 5. Browser notification should appear
 ```
 
-### ✅ Calendar View
+### Planned: Calendar View
 ```
 1. Navigate to http://localhost:3000/calendar
 2. Verify current month displayed
@@ -424,7 +449,7 @@ Use this checklist to verify the app is working correctly.
 5. Click prev/next month buttons
 ```
 
-### ✅ Search & Filter
+### Planned: Search & Filter
 ```
 1. Create multiple todos
 2. Type in search box: "meeting"
@@ -433,7 +458,7 @@ Use this checklist to verify the app is working correctly.
 5. Verify combined filters work
 ```
 
-### ✅ Export/Import
+### Planned: Export/Import
 ```
 1. Create several todos with tags and subtasks
 2. Click "Export Todos"
@@ -503,30 +528,15 @@ lsof -ti:3000 | xargs kill -9
 npm run dev -- -p 3001
 ```
 
+For port 3001, first set `RP_ORIGIN=http://localhost:3001` in `.env.local` and restart.
+
 ---
 
 ### Database Issues
 
 **Problem**: Database locked or corrupted
 
-**Solutions**:
-```bash
-# Stop dev server (Ctrl+C)
-
-# Delete database file
-rm todos.db
-
-# Restart server (recreates database)
-npm run dev
-```
-
-**Problem**: Missing holidays
-
-**Solutions**:
-```bash
-# Run seed script
-npx tsx scripts/seed-holidays.ts
-```
+**Solutions**: Stop the server before maintenance and back up the SQLite database. Confirm `DATABASE_PATH` is writable and persistent. Do not delete it as a login fix: it stores accounts, passkeys, sessions, and challenges. Holiday seeding is not part of this scaffold.
 
 ---
 
@@ -547,9 +557,9 @@ npx tsx scripts/seed-holidays.ts
 **Problem**: Can't login after registration
 
 **Solutions**:
-1. Clear browser data (cookies, localStorage)
-2. Delete `todos.db` and re-register
-3. Check browser console for errors (F12)
+1. Use the original username and a registered passkey on the configured origin.
+2. Check `.env.local` RP settings and `SESSION_SECRET`, then restart after changes.
+3. Retry cancelled/expired prompts; check browser console errors (F12). There is no recovery if all passkeys are lost; deleting the database does not recover an account.
 
 ---
 
@@ -592,14 +602,17 @@ I'm getting undefined for authenticator.counter. Check the copilot instructions 
 
 ### 4. Run Tests
 ```bash
-# Run all tests
-npx playwright test
+# Run unit tests, then browser E2E tests
+npm test
+npm run test:e2e
 
 # View test report
 npx playwright show-report
 ```
 
 ### 5. Build for Production
+Configure production HTTPS, persistent storage, and trusted-edge throttling as described above before deployment.
+
 ```bash
 # Create production build
 npm run build
@@ -628,16 +641,18 @@ npm run dev          # Start dev server
 npm run build        # Production build
 npm start            # Start production server
 npm run lint         # Run ESLint
+npm run typecheck    # TypeScript checks
 
 # Testing
-npx playwright test                    # Run all tests
+npm test                              # Unit tests
+npm run test:coverage                 # Unit coverage
+npm run test:e2e                      # Browser E2E tests
 npx playwright test --ui              # Interactive mode
 npx playwright test --headed          # See browser
 npx playwright show-report            # View results
 
 # Database
-npx tsx scripts/seed-holidays.ts      # Seed holidays
-sqlite3 todos.db                       # Inspect database
+sqlite3 todos.db                       # Optional SQLite CLI inspection
 
 # Copilot
 Ctrl+Alt+I (Cmd+Alt+I)                # Open Copilot Chat
@@ -657,8 +672,8 @@ You've successfully completed setup when:
 - ✅ Copilot Chat responds with project-specific answers
 - ✅ Todo app running on http://localhost:3000
 - ✅ Can register/login with WebAuthn
-- ✅ Can create and manage todos
-- ✅ Tests pass with `npx playwright test`
+- Confirm protected todo/calendar placeholders are displayed (task features come later)
+- Run validation scripts above and review results after changes
 - ✅ Copilot references PRPs when asked about features
 
 ---
